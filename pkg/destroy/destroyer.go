@@ -9,7 +9,7 @@ import (
 	"github.com/openshift/installer/pkg/asset/cluster"
 	// _ "github.com/openshift/installer/pkg/destroy/alibabacloud"
 	// _ "github.com/openshift/installer/pkg/destroy/aws"
-	// _ "github.com/openshift/installer/pkg/destroy/azure"
+	_ "github.com/openshift/installer/pkg/destroy/azure"
 	// _ "github.com/openshift/installer/pkg/destroy/baremetal"
 	// _ "github.com/openshift/installer/pkg/destroy/gcp"
 	// _ "github.com/openshift/installer/pkg/destroy/ibmcloud"

@@ -20,7 +20,6 @@ import (
 	"github.com/sirupsen/logrus"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apimachinery/pkg/util/wait"
 
 	azuresession "github.com/openshift/installer/pkg/asset/installconfig/azure"
 	"github.com/openshift/installer/pkg/destroy/providers"
@@ -52,7 +51,7 @@ type ClusterUninstaller struct {
 	applicationsClient      graphrbac.ApplicationsClient
 }
 
-func (o *ClusterUninstaller) configureClients() {
+func (o *ClusterUninstaller) configureClients(_ context.Context) (bool, error) {
 	o.resourceGroupsClient = resources.NewGroupsClientWithBaseURI(o.Environment.ResourceManagerEndpoint, o.SubscriptionID)
 	o.resourceGroupsClient.Authorizer = o.Authorizer
 
@@ -73,6 +72,8 @@ func (o *ClusterUninstaller) configureClients() {
 
 	o.applicationsClient = graphrbac.NewApplicationsClientWithBaseURI(o.Environment.GraphEndpoint, o.TenantID)
 	o.applicationsClient.Authorizer = o.GraphAuthorizer
+
+	return true, nil
 }
 
 // New returns an Azure destroyer from ClusterMetadata.
@@ -105,107 +106,68 @@ func New(logger logrus.FieldLogger, metadata *types.ClusterMetadata) (providers.
 	}, nil
 }
 
-// Run is the entrypoint to start the uninstall process.
-func (o *ClusterUninstaller) Run() (*types.ClusterQuota, error) {
-	var errs []error
+func (o *ClusterUninstaller) GetStages() []providers.Stage {
+	return []providers.Stage{
+		{
+			Name:  "Configure clients",
+			Funcs: []providers.StageFunc{o.configureClients},
+		}, {
+			Name:  "Delete public records",
+			Funcs: []providers.StageFunc{o.deleteRecords},
+		}, {
+			Name:  "Delete resource groups",
+			Funcs: []providers.StageFunc{o.deleteResourceGroups},
+		}, {
+			Name:  "Delete application registrations and their service principals",
+			Funcs: []providers.StageFunc{o.deleteAppRegistrations},
+		},
+	}
+}
+
+func (o *ClusterUninstaller) deleteRecords(ctx context.Context) (bool, error) {
 	var err error
-
-	o.configureClients()
-
-	// 2 hours
-	timeout := 120 * time.Minute
-	waitCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	wait.UntilWithContext(
-		waitCtx,
-		func(ctx context.Context) {
-			o.Logger.Debugf("deleting public records")
-			if o.CloudName == azure.StackCloud {
-				err = deleteAzureStackPublicRecords(ctx, o)
-			} else {
-				err = deletePublicRecords(ctx, o.zonesClient, o.recordsClient, o.privateZonesClient, o.privateRecordSetsClient, o.Logger, o.ResourceGroupName)
-			}
-			if err != nil {
-				o.Logger.Debug(err)
-				if isAuthError(err) {
-					cancel()
-					errs = append(errs, errors.Wrap(err, "unable to authenticate when deleting public DNS records"))
-				}
-				return
-			}
-			cancel()
-		},
-		1*time.Second,
-	)
-	err = waitCtx.Err()
-	if err != nil && err != context.Canceled {
-		errs = append(errs, errors.Wrap(err, "failed to delete public DNS records"))
+	o.Logger.Debugf("deleting public records")
+	if o.CloudName == azure.StackCloud {
+		err = deleteAzureStackPublicRecords(ctx, o)
+	} else {
+		err = deletePublicRecords(ctx, o.zonesClient, o.recordsClient, o.privateZonesClient, o.privateRecordSetsClient, o.Logger, o.ResourceGroupName)
+	}
+	if err != nil {
 		o.Logger.Debug(err)
+		if isAuthError(err) {
+			return false, errors.Wrap(err, "unable to authenticate when deleting public DNS records")
+		}
+		return false, nil
 	}
+	return true, nil
+}
 
-	deadline, _ := waitCtx.Deadline()
-	diff := time.Until(deadline)
-	if diff > 0 {
-		waitCtx, cancel = context.WithTimeout(context.Background(), diff)
-	}
-
-	wait.UntilWithContext(
-		waitCtx,
-		func(ctx context.Context) {
-			o.Logger.Debugf("deleting resource group")
-			err = deleteResourceGroup(ctx, o.resourceGroupsClient, o.Logger, o.ResourceGroupName)
-			if err != nil {
-				o.Logger.Debug(err)
-				if isAuthError(err) {
-					cancel()
-					errs = append(errs, errors.Wrap(err, "unable to authenticate when deleting resource group"))
-				} else if isResourceGroupBlockedError(err) {
-					cancel()
-					errs = append(errs, errors.Wrap(err, "unable to delete resource group, resources in the group are in use by others"))
-				}
-				return
-			}
-			cancel()
-		},
-		1*time.Second,
-	)
-	err = waitCtx.Err()
-	if err != nil && err != context.Canceled {
-		errs = append(errs, errors.Wrap(err, "failed to delete resource group"))
+func (o *ClusterUninstaller) deleteResourceGroups(ctx context.Context) (bool, error) {
+	o.Logger.Debugf("deleting resource group")
+	err := deleteResourceGroup(ctx, o.resourceGroupsClient, o.Logger, o.ResourceGroupName)
+	if err != nil {
 		o.Logger.Debug(err)
+		if isAuthError(err) {
+			return false, errors.Wrap(err, "unable to authenticate when deleting resource group")
+		} else if isResourceGroupBlockedError(err) {
+			return false, errors.Wrap(err, "unable to delete resource group, resources in the group are in use by others")
+		}
+		return false, nil
 	}
+	return true, nil
+}
 
-	deadline, _ = waitCtx.Deadline()
-	diff = time.Until(deadline)
-	if diff > 0 {
-		waitCtx, cancel = context.WithTimeout(context.Background(), diff)
-	}
-
-	wait.UntilWithContext(
-		waitCtx,
-		func(ctx context.Context) {
-			o.Logger.Debugf("deleting application registrations")
-			err = deleteApplicationRegistrations(ctx, o.applicationsClient, o.serviceprincipalsClient, o.Logger, o.InfraID)
-			if err != nil {
-				o.Logger.Debug(err)
-				if isAuthError(err) {
-					cancel()
-					errs = append(errs, errors.Wrap(err, "unable to authenticate when deleting application registrations and their service principals"))
-				}
-				return
-			}
-			cancel()
-		},
-		1*time.Second,
-	)
-	err = waitCtx.Err()
-	if err != nil && err != context.Canceled {
-		errs = append(errs, errors.Wrap(err, "failed to delete application registrations and their service principals"))
+func (o *ClusterUninstaller) deleteAppRegistrations(ctx context.Context) (bool, error) {
+	o.Logger.Debugf("deleting application registrations")
+	err := deleteApplicationRegistrations(ctx, o.applicationsClient, o.serviceprincipalsClient, o.Logger, o.InfraID)
+	if err != nil {
 		o.Logger.Debug(err)
+		if isAuthError(err) {
+			return false, errors.Wrap(err, "unable to authenticate when deleting application registrations and their service principals")
+		}
+		return false, nil
 	}
-
-	return nil, utilerrors.NewAggregate(errs)
+	return true, nil
 }
 
 func deleteAzureStackPublicRecords(ctx context.Context, o *ClusterUninstaller) error {
