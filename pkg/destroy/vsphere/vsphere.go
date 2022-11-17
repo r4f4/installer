@@ -19,7 +19,6 @@ import (
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/openshift/installer/pkg/asset/installconfig/vsphere"
 	"github.com/openshift/installer/pkg/destroy/providers"
@@ -43,11 +42,21 @@ type ClusterUninstaller struct {
 
 	Logger logrus.FieldLogger
 
-	context context.Context
+	context       context.Context
+	clientCleanup vsphere.ClientLogout
 }
 
 // New returns an VSphere destroyer from ClusterMetadata.
 func New(logger logrus.FieldLogger, metadata *installertypes.ClusterMetadata) (providers.Destroyer, error) {
+	vim25Client, restClient, cleanup, err := vsphere.CreateVSphereClients(context.TODO(),
+		metadata.VSphere.VCenter,
+		metadata.VSphere.Username,
+		metadata.VSphere.Password)
+	if err != nil {
+		return nil, err
+	}
+	// defer cleanup()
+
 	return &ClusterUninstaller{
 		ClusterID:         metadata.ClusterID,
 		InfraID:           metadata.InfraID,
@@ -55,14 +64,43 @@ func New(logger logrus.FieldLogger, metadata *installertypes.ClusterMetadata) (p
 		username:          metadata.VSphere.Username,
 		password:          metadata.VSphere.Password,
 		terraformPlatform: metadata.VSphere.TerraformPlatform,
+		RestClient:        restClient,
+		Client:            vim25Client,
 
-		Logger:  logger,
-		context: context.Background(),
+		Logger:        logger,
+		context:       context.Background(),
+		clientCleanup: cleanup,
 	}, nil
+}
+
+func (o *ClusterUninstaller) GetStages() []providers.Stage {
+	return []providers.Stage{
+		{
+			Name:  "Stop virtual machines",
+			Funcs: []providers.StageFunc{o.stopVirtualMachines},
+		}, {
+			Name:  "Destroy virtual machines",
+			Funcs: []providers.StageFunc{o.deleteVirtualMachines},
+		}, {
+			Name:  "Destroy Folder",
+			Funcs: []providers.StageFunc{o.deleteFolder},
+		}, {
+			Name:  "Delete Storage Policy and Tags",
+			Funcs: []providers.StageFunc{o.deleteStoragePolicy, o.deleteTag, o.deleteTagCategory},
+		}, {
+			Name:  "Cleanup clients",
+			Funcs: []providers.StageFunc{o.cleanupClients},
+		},
+	}
 }
 
 func isNotFound(err error) bool {
 	return err != nil && strings.HasSuffix(err.Error(), http.StatusText(http.StatusNotFound))
+}
+
+func (o *ClusterUninstaller) cleanupClients(_ context.Context) (bool, error) {
+	o.clientCleanup()
+	return true, nil
 }
 
 func (o *ClusterUninstaller) contextWithTimeout() (context.Context, context.CancelFunc) {
@@ -117,7 +155,7 @@ func (o *ClusterUninstaller) listFolders() ([]mo.Folder, error) {
 	return o.getFolderManagedObjects(folderList)
 }
 
-func (o *ClusterUninstaller) deleteFolder() error {
+func (o *ClusterUninstaller) deleteFolder(ctx context.Context) (bool, error) {
 	ctx, cancel := o.contextWithTimeout()
 	defer cancel()
 
@@ -125,7 +163,8 @@ func (o *ClusterUninstaller) deleteFolder() error {
 
 	folderMoList, err := o.listFolders()
 	if err != nil {
-		return err
+		o.Logger.Debugf("could not list folders: %v", err)
+		return false, nil
 	}
 
 	// The installer should create at most one parent,
@@ -133,13 +172,13 @@ func (o *ClusterUninstaller) deleteFolder() error {
 	// If there are more or less fail with error message.
 	if o.terraformPlatform != vspheretypes.ZoningTerraformName {
 		if len(folderMoList) > 1 {
-			return errors.Errorf("Expected 1 Folder per tag but got %d", len(folderMoList))
+			return false, errors.Errorf("Expected 1 Folder per tag but got %d", len(folderMoList))
 		}
 	}
 
 	if len(folderMoList) == 0 {
 		o.Logger.Debug("All folders deleted")
-		return nil
+		return true, nil
 	}
 
 	// If there are no children in the folder, go ahead and remove it
@@ -152,7 +191,7 @@ func (o *ClusterUninstaller) deleteFolder() error {
 				entities = append(entities, fmt.Sprintf("%s:%s", child.Type, child.Value))
 			}
 			folderLogger.Errorf("Folder should be empty but contains %d objects: %s. The installer will retry removing \"virtualmachine\" objects, but any other type will need to be removed manually before the deprovision can proceed", numChildren, strings.Join(entities, ", "))
-			return errors.Errorf("Expected Folder %s to be empty", f.Name)
+			return false, errors.Errorf("Expected Folder %s to be empty", f.Name)
 		}
 		folder := object.NewFolder(o.Client, f.Reference())
 		task, err := folder.Destroy(ctx)
@@ -161,16 +200,16 @@ func (o *ClusterUninstaller) deleteFolder() error {
 		}
 		if err != nil {
 			folderLogger.Debug(err)
-			return err
+			return false, nil
 		}
 		folderLogger.Info("Destroyed")
 	}
 
-	return nil
+	return true, nil
 }
 
-func (o *ClusterUninstaller) deleteStoragePolicy() error {
-	ctx, cancel := context.WithTimeout(o.context, time.Minute*30)
+func (o *ClusterUninstaller) deleteStoragePolicy(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute*30)
 	defer cancel()
 
 	o.Logger.Debug("Delete Storage Policy")
@@ -182,17 +221,20 @@ func (o *ClusterUninstaller) deleteStoragePolicy() error {
 
 	pbmClient, err := pbm.NewClient(ctx, o.Client)
 	if err != nil {
-		return err
+		o.Logger.Debugf("could not get pbm client: %v", err)
+		return false, nil
 	}
 
 	ids, err := pbmClient.QueryProfile(ctx, rtype, string(category))
 	if err != nil {
-		return err
+		o.Logger.Debugf("could not query profile: %v", err)
+		return false, nil
 	}
 
 	profiles, err := pbmClient.RetrieveContent(ctx, ids)
 	if err != nil {
-		return err
+		o.Logger.Debug("could not retrieve profile: %v", err)
+		return false, nil
 	}
 	policyName := fmt.Sprintf("openshift-storage-policy-%s", o.InfraID)
 	policyLogger := o.Logger.WithField("StoragePolicy", policyName)
@@ -207,15 +249,16 @@ func (o *ClusterUninstaller) deleteStoragePolicy() error {
 	if len(matchingProfileIds) > 0 {
 		_, err = pbmClient.DeleteProfile(ctx, matchingProfileIds)
 		if err != nil {
-			return err
+			policyLogger.Debugf("failed to delete profile: %v", err)
+			return false, nil
 		}
 		policyLogger.Info("Destroyed")
 
 	}
-	return nil
+	return true, nil
 }
 
-func (o *ClusterUninstaller) deleteTag() error {
+func (o *ClusterUninstaller) deleteTag(ctx context.Context) (bool, error) {
 	ctx, cancel := o.contextWithTimeout()
 	defer cancel()
 
@@ -228,15 +271,17 @@ func (o *ClusterUninstaller) deleteTag() error {
 		err = tagManager.DeleteTag(ctx, tag)
 		if err == nil {
 			tagLogger.Info("Deleted")
+			return true, nil
 		}
 	}
 	if isNotFound(err) {
-		return nil
+		return true, nil
 	}
-	return err
+	tagLogger.Debugf("failed to delete tag: %v", err)
+	return false, nil
 }
 
-func (o *ClusterUninstaller) deleteTagCategory() error {
+func (o *ClusterUninstaller) deleteTagCategory(ctx context.Context) (bool, error) {
 	ctx, cancel := o.contextWithTimeout()
 	defer cancel()
 
@@ -248,7 +293,7 @@ func (o *ClusterUninstaller) deleteTagCategory() error {
 	ids, err := tagManager.ListCategories(ctx)
 	if err != nil {
 		tcLogger.Errorln(err)
-		return err
+		return false, nil
 	}
 
 	var errs []error
@@ -263,73 +308,17 @@ func (o *ClusterUninstaller) deleteTagCategory() error {
 		if category.Name == categoryID {
 			if err = tagManager.DeleteCategory(ctx, category); err != nil {
 				tcLogger.Errorln(err)
-				return err
+				return false, nil
 			}
 			tcLogger.Info("Deleted")
-			return nil
+			return true, nil
 		}
 	}
 
 	if len(errs) == 0 {
 		tcLogger.Debug("Not found")
+		return true, nil
 	}
-	return utilerrors.NewAggregate(errs)
-}
-
-func (o *ClusterUninstaller) destroyCluster() (bool, error) {
-	stagedFuncs := [][]struct {
-		name    string
-		execute func() error
-	}{{
-		{name: "Stop virtual machines", execute: o.stopVirtualMachines},
-	}, {
-		{name: "Virtual Machines", execute: o.deleteVirtualMachines},
-	}, {
-		{name: "Folder", execute: o.deleteFolder},
-	}, {
-		{name: "Storage Policy", execute: o.deleteStoragePolicy},
-		{name: "Tag", execute: o.deleteTag},
-		{name: "Tag Category", execute: o.deleteTagCategory},
-	}}
-
-	stageFailed := false
-	for _, stage := range stagedFuncs {
-		if stageFailed {
-			break
-		}
-		for _, f := range stage {
-			err := f.execute()
-			if err != nil {
-				o.Logger.Debugf("%s: %v", f.name, err)
-				stageFailed = true
-			}
-		}
-	}
-
-	return !stageFailed, nil
-}
-
-// Run is the entrypoint to start the uninstall process.
-func (o *ClusterUninstaller) Run() (*installertypes.ClusterQuota, error) {
-	vim25Client, restClient, cleanup, err := vsphere.CreateVSphereClients(context.TODO(),
-		o.vCenter,
-		o.username,
-		o.password)
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
-
-	o.Client = vim25Client
-	o.RestClient = restClient
-
-	err = wait.PollImmediateInfinite(
-		time.Second*10,
-		o.destroyCluster,
-	)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to destroy cluster")
-	}
-
-	return nil, nil
+	tcLogger.Debugln(utilerrors.NewAggregate(errs))
+	return false, nil
 }

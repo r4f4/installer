@@ -54,15 +54,15 @@ func (o *ClusterUninstaller) stopVirtualMachine(ctx context.Context, vmMO mo.Vir
 	return nil
 }
 
-func (o *ClusterUninstaller) stopVirtualMachines() error {
-	ctx, cancel := context.WithTimeout(o.context, time.Minute*30)
+func (o *ClusterUninstaller) stopVirtualMachines(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute*30)
 	defer cancel()
 
 	o.Logger.Debug("Power Off Virtual Machines")
 	found, err := o.listVirtualMachines(ctx)
 	if err != nil {
 		o.Logger.Debug(err)
-		return err
+		return true, err
 	}
 
 	var errs []error
@@ -74,7 +74,11 @@ func (o *ClusterUninstaller) stopVirtualMachines() error {
 		}
 	}
 
-	return utilerrors.NewAggregate(errs)
+	if len(errs) > 0 {
+		o.Logger.Debug(utilerrors.NewAggregate(errs))
+		return false, nil
+	}
+	return true, nil
 }
 
 func (o *ClusterUninstaller) deleteVirtualMachine(ctx context.Context, vmMO mo.VirtualMachine) error {
@@ -92,15 +96,15 @@ func (o *ClusterUninstaller) deleteVirtualMachine(ctx context.Context, vmMO mo.V
 	return nil
 }
 
-func (o *ClusterUninstaller) deleteVirtualMachines() error {
-	ctx, cancel := context.WithTimeout(o.context, time.Minute*30)
+func (o *ClusterUninstaller) deleteVirtualMachines(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute*30)
 	defer cancel()
 
 	o.Logger.Debug("Delete Virtual Machines")
 	found, err := o.listVirtualMachines(ctx)
 	if err != nil {
 		o.Logger.Debug(err)
-		return err
+		return false, nil
 	}
 
 	var errs []error
@@ -110,5 +114,9 @@ func (o *ClusterUninstaller) deleteVirtualMachines() error {
 		}
 	}
 
-	return utilerrors.NewAggregate(errs)
+	if len(errs) > 0 {
+		o.Logger.Debug(utilerrors.NewAggregate(errs))
+		return false, nil
+	}
+	return true, nil
 }

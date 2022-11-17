@@ -19,7 +19,7 @@ import (
 	// _ "github.com/openshift/installer/pkg/destroy/ovirt"
 	// _ "github.com/openshift/installer/pkg/destroy/powervs"
 	"github.com/openshift/installer/pkg/destroy/providers"
-	// _ "github.com/openshift/installer/pkg/destroy/vsphere"
+	_ "github.com/openshift/installer/pkg/destroy/vsphere"
 	"github.com/openshift/installer/pkg/types"
 )
 
