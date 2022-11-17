@@ -86,6 +86,10 @@ func New(logger logrus.FieldLogger, metadata *types.ClusterMetadata) (providers.
 	}, nil
 }
 
+func (o *ClusterUninstaller) GetStages() []providers.Stage {
+	return []providers.Stage{}
+}
+
 // Run is the entrypoint to start the uninstall process.
 func (o *ClusterUninstaller) Run() (*types.ClusterQuota, error) {
 	opts := openstackdefaults.DefaultClientOpts(o.Cloud)
