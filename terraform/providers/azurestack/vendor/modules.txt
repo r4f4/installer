@@ -707,3 +707,4 @@ gopkg.in/warnings.v0
 # github.com/hashicorp/go-getter => github.com/hashicorp/go-getter v1.6.2
 # golang.org/x/crypto => golang.org/x/crypto v0.0.0-20220315160706-3147a52a75dd
 # golang.org/x/text => golang.org/x/text v0.3.7
+# github.com/hashicorp/nomad => github.com/hashicorp/nomad v0.9.5

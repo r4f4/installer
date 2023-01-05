@@ -150,3 +150,6 @@ replace golang.org/x/text => golang.org/x/text v0.3.7
 
 // https://issues.redhat.com/browse/OCPBUGS-2498
 replace github.com/hashicorp/vault => github.com/hashicorp/vault v1.9.10
+
+// https://issues.redhat.com/browse/OCPBUGS-5395
+replace github.com/hashicorp/nomad => github.com/hashicorp/nomad v0.9.5

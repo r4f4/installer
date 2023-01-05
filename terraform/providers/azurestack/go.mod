@@ -116,3 +116,6 @@ replace golang.org/x/crypto => golang.org/x/crypto v0.0.0-20220315160706-3147a52
 
 // https://bugzilla.redhat.com/show_bug.cgi?id=2100495
 replace golang.org/x/text => golang.org/x/text v0.3.7
+
+// https://issues.redhat.com/browse/OCPBUGS-5395
+replace github.com/hashicorp/nomad => github.com/hashicorp/nomad v0.9.5

@@ -9609,3 +9609,4 @@ sigs.k8s.io/yaml
 # github.com/openshift/assisted-service/models => github.com/openshift/assisted-service/models v0.0.0-20220928142635-a40422bdea61
 # golang.org/x/crypto => golang.org/x/crypto v0.0.0-20220315160706-3147a52a75dd
 # golang.org/x/text => golang.org/x/text v0.3.7
+# github.com/hashicorp/nomad => github.com/hashicorp/nomad v0.9.5
