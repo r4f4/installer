@@ -492,3 +492,105 @@ func TestValidateCredentialMode(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateMarketplaceImages(t *testing.T) {
+	validDefaultMachineImage := func(ic *types.InstallConfig) {
+		ic.Platform.GCP.DefaultMachinePlatform.OSImage.Project = "project-id"
+		ic.Platform.GCP.DefaultMachinePlatform.OSImage.Name = "valid-image"
+	}
+	invalidDefaultMachineImage := func(ic *types.InstallConfig) {
+		ic.Platform.GCP.DefaultMachinePlatform.OSImage.Project = "project-id"
+		ic.Platform.GCP.DefaultMachinePlatform.OSImage.Name = "invalid-image"
+	}
+	validControlPlaneImage := func(ic *types.InstallConfig) {
+		ic.ControlPlane.Platform.GCP.OSImage.Project = "project-id"
+		ic.ControlPlane.Platform.GCP.OSImage.Name = "valid-image"
+	}
+	invalidControlPlaneImage := func(ic *types.InstallConfig) {
+		ic.ControlPlane.Platform.GCP.OSImage.Project = "project-id"
+		ic.ControlPlane.Platform.GCP.OSImage.Name = "invalid-image"
+	}
+	validComputeImage := func(ic *types.InstallConfig) {
+		ic.Compute[0].Platform.GCP.OSImage.Project = "project-id"
+		ic.Compute[0].Platform.GCP.OSImage.Name = "valid-image"
+	}
+	invalidComputeImage := func(ic *types.InstallConfig) {
+		ic.Compute[0].Platform.GCP.OSImage.Project = "project-id"
+		ic.Compute[0].Platform.GCP.OSImage.Name = "invalid-image"
+	}
+
+	cases := []struct {
+		name           string
+		edits          editFunctions
+		expectedError  bool
+		expectedErrMsg string
+	}{
+		{
+			name:           "Valid image for default machine",
+			edits:          editFunctions{validDefaultMachineImage},
+			expectedError:  false,
+			expectedErrMsg: "",
+		},
+		{
+			name:           "Invalid image for default machine",
+			edits:          editFunctions{invalidDefaultMachineImage},
+			expectedError:  true,
+			expectedErrMsg: `^\[platform.gcp.defaultMachinePlatform.osImage: Invalid value: gcp.OSImage{Project:"project\-id", Name:"invalid\-image"}: could not retrieve boot image: 404\]$`,
+		},
+		{
+			name:           "Valid image for control plane",
+			edits:          editFunctions{validControlPlaneImage},
+			expectedError:  false,
+			expectedErrMsg: "",
+		},
+		{
+			name:           "Invalid image for control plane",
+			edits:          editFunctions{invalidControlPlaneImage},
+			expectedError:  true,
+			expectedErrMsg: `^\[controlPlane.platform.gcp.osImage: Invalid value: gcp.OSImage{Project:"project\-id", Name:"invalid\-image"}: could not retrieve boot image: 404\]$`,
+		},
+		{
+			name:           "Valid image for compute",
+			edits:          editFunctions{validComputeImage},
+			expectedError:  false,
+			expectedErrMsg: "",
+		},
+		{
+			name:           "Invalid image for compute",
+			edits:          editFunctions{invalidComputeImage},
+			expectedError:  true,
+			expectedErrMsg: `^\[compute\[0\].platform.gcp.osImage: Invalid value: gcp.OSImage{Project:"project\-id", Name:"invalid\-image"}: could not retrieve boot image: 404\]$`,
+		},
+		{
+			name:           "Invalid images",
+			edits:          editFunctions{invalidDefaultMachineImage, invalidControlPlaneImage, invalidComputeImage},
+			expectedError:  true,
+			expectedErrMsg: `\[(.*\.osImage: Invalid value: gcp.OSImage{Project:"project\-id", Name:"invalid\-image"}: could not retrieve boot image: 404){3}\]$`,
+		},
+	}
+
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	gcpClient := mock.NewMockAPI(mockCtrl)
+
+	gcpClient.EXPECT().GetImage(gomock.Any(), gomock.Any(), gomock.Eq("valid-image")).Return(nil, nil).AnyTimes()
+	gcpClient.EXPECT().GetImage(gomock.Any(), gomock.Any(), gomock.Eq("invalid-image")).Return(nil, fmt.Errorf("404")).AnyTimes()
+	gcpClient.EXPECT().GetImage(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("API error")).AnyTimes()
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			editedInstallConfig := validInstallConfig()
+			for _, edit := range tc.edits {
+				edit(editedInstallConfig)
+			}
+
+			errs := validateMarketplaceImages(gcpClient, editedInstallConfig)
+			if tc.expectedError {
+				assert.Regexp(t, tc.expectedErrMsg, errs)
+			} else {
+				assert.Empty(t, errs)
+			}
+		})
+	}
+}

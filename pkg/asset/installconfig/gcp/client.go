@@ -39,6 +39,7 @@ type API interface {
 	GetEnabledServices(ctx context.Context, project string) ([]string, error)
 	GetCredentials() *googleoauth.Credentials
 	GetProjectPermissions(ctx context.Context, project string, permissions []string) (sets.Set[string], error)
+	GetImage(ctx context.Context, project, name string) (*compute.Image, error)
 	ValidateServiceAccountHasPermissions(ctx context.Context, project string, permissions []string) (bool, error)
 }
 
@@ -391,4 +392,16 @@ func (c *Client) ValidateServiceAccountHasPermissions(ctx context.Context, proje
 		return false, err
 	}
 	return validPermissions.Len() == len(permissions), nil
+}
+
+func (c *Client) GetImage(ctx context.Context, project, name string) (*compute.Image, error) {
+	ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancel()
+
+	svc, err := c.getComputeService(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return svc.Images.Get(project, name).Context(ctx).Do()
 }

@@ -82,6 +82,21 @@ func (mr *MockAPIMockRecorder) GetEnabledServices(ctx, project interface{}) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEnabledServices", reflect.TypeOf((*MockAPI)(nil).GetEnabledServices), ctx, project)
 }
 
+// GetImage mocks base method.
+func (m *MockAPI) GetImage(ctx context.Context, project, name string) (*compute.Image, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetImage", ctx, project, name)
+	ret0, _ := ret[0].(*compute.Image)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetImage indicates an expected call of GetImage.
+func (mr *MockAPIMockRecorder) GetImage(ctx, project, name interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetImage", reflect.TypeOf((*MockAPI)(nil).GetImage), ctx, project, name)
+}
+
 // GetMachineType mocks base method.
 func (m *MockAPI) GetMachineType(ctx context.Context, project, zone, machineType string) (*compute.MachineType, error) {
 	m.ctrl.T.Helper()
