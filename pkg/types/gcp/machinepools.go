@@ -121,6 +121,14 @@ func (a *MachinePool) Set(required *MachinePool) {
 	if required.ConfidentialCompute != "" {
 		a.ConfidentialCompute = required.ConfidentialCompute
 	}
+
+	if required.OSImage.Project != "" {
+		a.OSImage.Project = required.OSImage.Project
+	}
+
+	if required.OSImage.Name != "" {
+		a.OSImage.Name = required.OSImage.Name
+	}
 }
 
 // EncryptionKeyReference describes the encryptionKey to use for a disk's encryption.
