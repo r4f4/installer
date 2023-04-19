@@ -215,6 +215,11 @@
               "image": "ami-07d7881c3f504bccf"
             }
           }
+        },
+        "gcp": {
+          "release": "414.92.202304131328-0",
+          "project": "rhcos-cloud",
+          "name": "rhcos-414-92-202304131328-0-gcp-x86-64"
         }
       },
       "rhel-coreos-extensions": {
