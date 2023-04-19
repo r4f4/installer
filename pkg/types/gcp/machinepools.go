@@ -43,6 +43,11 @@ type MachinePool struct {
 	// +kubebuilder:validation:Enum=Enabled;Disabled
 	// +optional
 	ConfidentialCompute string `json:"confidentialCompute,omitempty"`
+
+	// OSImage defines the boot image for the instance.
+	//
+	// +optional
+	OSImage `json:"osImage"`
 }
 
 // OSDisk defines the disk for machines on GCP.
@@ -63,6 +68,14 @@ type OSDisk struct {
 	//
 	// +optional
 	EncryptionKey *EncryptionKeyReference `json:"encryptionKey,omitempty"`
+}
+
+// OSImage defines the boot image for the nodes
+type OSImage struct {
+	// Project is the project name where the image resides
+	Project string `json:"project"`
+	// Name is the name of the image
+	Name string `json:"name"`
 }
 
 // Set sets the values from `required` to `a`.
