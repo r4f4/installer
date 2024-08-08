@@ -11,25 +11,34 @@ import (
 	"github.com/openshift/installer/pkg/types/gcp"
 )
 
-func (o *ClusterUninstaller) listAddresses(ctx context.Context, typeName string, listFunc addressListFunc) ([]cloudResource, error) {
-	return o.listAddressesWithFilter(ctx, typeName, "items(name),nextPageToken", o.clusterIDFilter(), listFunc)
+func (o *ClusterUninstaller) listAddresses(ctx context.Context, typeName string) ([]cloudResource, error) {
+	return o.listAddressesWithFilter(ctx, typeName, "items(name),nextPageToken", o.clusterIDFilter())
 }
 
 // listAddressesWithFilter lists addresses in the project that satisfy the filter criteria.
 // The fields parameter specifies which fields should be returned in the result, the filter string contains
 // a filter string passed to the API to filter results. The listFunc is a client-side function
 // that will find all resources that contain the filtered information in the fields supplied.
-func (o *ClusterUninstaller) listAddressesWithFilter(ctx context.Context, typeName, fields, filter string, listFunc addressListFunc) ([]cloudResource, error) {
+func (o *ClusterUninstaller) listAddressesWithFilter(ctx context.Context, typeName, fields, filter string) ([]cloudResource, error) {
 	o.Logger.Debugf("Listing addresses")
 
 	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
-	result := []cloudResource{}
-	list, err := listFunc(ctx, filter, fields)
+	var err error
+	var list *compute.AddressList
+	switch typeName {
+	case "address":
+		list, err = o.computeSvc.GlobalAddresses.List(o.ProjectID).Filter(filter).Fields(googleapi.Field(fields)).Context(ctx).Do()
+	case "regionaddress":
+		list, err = o.computeSvc.Addresses.List(o.ProjectID, o.Region).Filter(filter).Fields(googleapi.Field(fields)).Context(ctx).Do()
+	default:
+		return nil, fmt.Errorf("invalid address type %q", typeName)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to list addresses: %w", err)
 	}
 
+	result := []cloudResource{}
 	for _, item := range list.Items {
 		o.Logger.Debugf("Found address: %s", item.Name)
 		// Note: the string match below is necessary because the gcp is not returning the addressType
@@ -54,12 +63,21 @@ func (o *ClusterUninstaller) listAddressesWithFilter(ctx context.Context, typeNa
 	return result, nil
 }
 
-func (o *ClusterUninstaller) deleteAddress(ctx context.Context, item cloudResource, deleteFunc addressDestroyFunc) error {
+func (o *ClusterUninstaller) deleteAddressResource(ctx context.Context, item cloudResource) error {
 	o.Logger.Debugf("Deleting address %s", item.name)
 	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
-	op, err := deleteFunc(ctx, item)
 
+	var err error
+	var op *compute.Operation
+	switch item.typeName {
+	case "address":
+		op, err = o.computeSvc.GlobalAddresses.Delete(o.ProjectID, item.name).RequestId(o.requestID(item.typeName, item.name)).Context(ctx).Do()
+	case "regionaddress":
+		op, err = o.computeSvc.Addresses.Delete(o.ProjectID, o.Region, item.name).RequestId(o.requestID(item.typeName, item.name)).Context(ctx).Do()
+	default:
+		return fmt.Errorf("invalid address type %q", item.typeName)
+	}
 	if err != nil && !isNoOp(err) {
 		o.resetRequestID(item.typeName, item.name)
 		return fmt.Errorf("failed to delete address %s: %w", item.name, err)
@@ -79,56 +97,32 @@ func (o *ClusterUninstaller) deleteAddress(ctx context.Context, item cloudResour
 // destroyAddresses removes all address resources that have a name prefixed
 // with the cluster's infra ID.
 func (o *ClusterUninstaller) destroyAddresses(ctx context.Context) error {
-	for _, ad := range []addressDestroyer{
-		{
-			itemTypeName: "address",
-			destroyFunc:  o.addressDelete,
-			listFunc:     o.addressList,
-		},
-		{
-			itemTypeName: "regionaddress",
-			destroyFunc:  o.regionAddressDelete,
-			listFunc:     o.regionAddressList,
-		},
-	} {
-		found, err := o.listAddresses(ctx, ad.itemTypeName, ad.listFunc)
+	found, err := o.listAddresses(ctx, "address")
+	if err != nil {
+		return err
+	}
+	items := o.insertPendingItems("address", found)
+
+	found, err = o.listAddresses(ctx, "regionaddress")
+	if err != nil {
+		return err
+	}
+	items = o.insertPendingItems("regionaddress", found)
+
+	for _, item := range items {
+		err := o.deleteAddressResource(ctx, item)
 		if err != nil {
-			return err
-		}
-		items := o.insertPendingItems(ad.itemTypeName, found)
-		for _, item := range items {
-			err := o.deleteAddress(ctx, item, ad.destroyFunc)
-			if err != nil {
-				o.errorTracker.suppressWarning(item.key, err, o.Logger)
-			}
-		}
-		if items = o.getPendingItems(ad.itemTypeName); len(items) > 0 {
-			return fmt.Errorf("%d items pending", len(items))
+			o.errorTracker.suppressWarning(item.key, err, o.Logger)
 		}
 	}
+
+	if items = o.getPendingItems("address"); len(items) > 0 {
+		return fmt.Errorf("%d global addresses pending", len(items))
+	}
+
+	if items = o.getPendingItems("regionaddress"); len(items) > 0 {
+		return fmt.Errorf("%d region addresses pending", len(items))
+	}
+
 	return nil
-}
-
-type addressListFunc func(ctx context.Context, filter, fields string) (*compute.AddressList, error)
-type addressDestroyFunc func(ctx context.Context, item cloudResource) (*compute.Operation, error)
-type addressDestroyer struct {
-	itemTypeName string
-	destroyFunc  addressDestroyFunc
-	listFunc     addressListFunc
-}
-
-func (o *ClusterUninstaller) addressDelete(ctx context.Context, item cloudResource) (*compute.Operation, error) {
-	return o.computeSvc.GlobalAddresses.Delete(o.ProjectID, item.name).RequestId(o.requestID(item.typeName, item.name)).Context(ctx).Do()
-}
-
-func (o *ClusterUninstaller) addressList(ctx context.Context, filter, fields string) (*compute.AddressList, error) {
-	return o.computeSvc.GlobalAddresses.List(o.ProjectID).Filter(filter).Fields(googleapi.Field(fields)).Context(ctx).Do()
-}
-
-func (o *ClusterUninstaller) regionAddressDelete(ctx context.Context, item cloudResource) (*compute.Operation, error) {
-	return o.computeSvc.Addresses.Delete(o.ProjectID, o.Region, item.name).RequestId(o.requestID(item.typeName, item.name)).Context(ctx).Do()
-}
-
-func (o *ClusterUninstaller) regionAddressList(ctx context.Context, filter, fields string) (*compute.AddressList, error) {
-	return o.computeSvc.Addresses.List(o.ProjectID, o.Region).Filter(filter).Fields(googleapi.Field(fields)).Context(ctx).Do()
 }
