@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pkg/errors"
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/googleapi"
 
@@ -17,8 +16,8 @@ func (o *ClusterUninstaller) listBackendServices(ctx context.Context, typeName s
 
 // listBackendServicesWithFilter lists backend services in the project that satisfy the filter criteria.
 // The fields parameter specifies which fields should be returned in the result, the filter string contains
-// a filter string passed to the API to filter results. The filterFunc is a client-side filtering function
-// that determines whether a particular result should be returned or not.
+// a filter string passed to the API to filter results. The listFunc is a client-side function
+// // that will find all resources that contain the filtered information in the fields supplied.
 func (o *ClusterUninstaller) listBackendServicesWithFilter(ctx context.Context, typeName, fields, filter string, listFunc backendServiceListFunc) ([]cloudResource, error) {
 	o.Logger.Debugf("Listing backend services")
 
@@ -56,11 +55,11 @@ func (o *ClusterUninstaller) deleteBackendService(ctx context.Context, item clou
 
 	if err != nil && !isNoOp(err) {
 		o.resetRequestID(item.typeName, item.name)
-		return errors.Wrapf(err, "failed to delete backend service %s", item.name)
+		return fmt.Errorf("failed to delete backend service %s: %w", item.name, err)
 	}
 	if op != nil && op.Status == "DONE" && isErrorStatus(op.HttpErrorStatusCode) {
 		o.resetRequestID(item.typeName, item.name)
-		return errors.Errorf("failed to delete backend service %s with error: %s", item.name, operationErrorMessage(op))
+		return fmt.Errorf("failed to delete backend service %s with error: %s", item.name, operationErrorMessage(op))
 	}
 	if (err != nil && isNoOp(err)) || (op != nil && op.Status == "DONE") {
 		o.resetRequestID(item.typeName, item.name)
@@ -97,7 +96,7 @@ func (o *ClusterUninstaller) destroyBackendServices(ctx context.Context) error {
 			}
 		}
 		if items = o.getPendingItems(dbs.itemTypeName); len(items) > 0 {
-			return errors.Errorf("%d items pending", len(items))
+			return fmt.Errorf("%d items pending", len(items))
 		}
 	}
 	return nil

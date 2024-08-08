@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pkg/errors"
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/googleapi"
 
@@ -57,7 +56,7 @@ func (o *ClusterUninstaller) deleteTargetTCPProxy(ctx context.Context, item clou
 	}
 	if op != nil && op.Status == "DONE" && isErrorStatus(op.HttpErrorStatusCode) {
 		o.resetRequestID(item.typeName, item.name)
-		return errors.Errorf("failed to delete target tcp proxy %s with error: %s", item.name, operationErrorMessage(op))
+		return fmt.Errorf("failed to delete target tcp proxy %s with error: %s", item.name, operationErrorMessage(op))
 	}
 	if (err != nil && isNoOp(err)) || (op != nil && op.Status == "DONE") {
 		o.resetRequestID(item.typeName, item.name)
@@ -94,7 +93,7 @@ func (o *ClusterUninstaller) destroyTargetTCPProxies(ctx context.Context) error 
 			}
 		}
 		if items = o.getPendingItems(ttp.itemTypeName); len(items) > 0 {
-			return errors.Errorf("%d items pending", len(items))
+			return fmt.Errorf("%d items pending", len(items))
 		}
 	}
 	return nil
