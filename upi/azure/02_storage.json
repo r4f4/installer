@@ -2,17 +2,6 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "architecture": {
-      "type": "string",
-      "metadata": {
-        "description": "The architecture of the Virtual Machines"
-      },
-      "defaultValue": "x64",
-      "allowedValues": [
-        "Arm64",
-        "x64"
-      ]
-    },
     "baseName": {
       "type": "string",
       "minLength": 1,
@@ -26,18 +15,26 @@
         "description": "The Storage Account name"
       }
     },
-    "vhdBlobURL": {
+    "vhdBlobURLX64": {
       "type": "string",
       "metadata": {
-        "description": "URL pointing to the blob where the VHD to be used to create master and worker machines is located"
+        "description": "URL pointing to the blob where the VHD to be used to create X64 master and worker machines is located"
+      }
+    },
+    "vhdBlobURLARM64": {
+      "type": "string",
+      "metadata": {
+        "description": "URL pointing to the blob where the VHD to be used to create ARM64 master and worker machines is located"
       }
     }
   },
   "variables": {
     "location": "[resourceGroup().location]",
     "galleryName": "[concat('gallery_', replace(parameters('baseName'), '-', '_'))]",
-    "imageName": "[parameters('baseName')]",
-    "imageNameGen2": "[concat(parameters('baseName'), '-gen2')]",
+    "imageNameX64": "[concat(parameters('baseName'), '-x64')]",
+    "imageNameArm64": "[concat(parameters('baseName'), '-Arm64')]",
+    "imageNameGen2X64": "[concat(parameters('baseName'), '-x64-gen2')]",
+    "imageNameGen2Arm64": "[concat(parameters('baseName'), '-Arm64-gen2')]",
     "imageRelease": "1.0.0"
   },
   "resources": [
@@ -50,13 +47,13 @@
         {
           "apiVersion": "2021-10-01",
           "type": "images",
-          "name": "[variables('imageName')]",
+          "name": "[variables('imageNameX64')]",
           "location": "[variables('location')]",
           "dependsOn": [
             "[variables('galleryName')]"
           ],
           "properties": {
-            "architecture": "[parameters('architecture')]",
+            "architecture": "x64",
             "hyperVGeneration": "V1",
             "identifier": {
               "offer": "rhcos",
@@ -73,7 +70,7 @@
               "name": "[variables('imageRelease')]",
               "location": "[variables('location')]",
               "dependsOn": [
-                "[variables('imageName')]"
+                "[variables('imageNameX64')]"
               ],
               "properties": {
                 "publishingProfile": {
@@ -89,7 +86,7 @@
                   "osDiskImage": {
                     "source": {
                       "id": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccount'))]",
-                      "uri": "[parameters('vhdBlobURL')]"
+                      "uri": "[parameters('vhdBlobURLX64')]"
                     }
                   }
                 }
@@ -100,13 +97,13 @@
         {
           "apiVersion": "2021-10-01",
           "type": "images",
-          "name": "[variables('imageNameGen2')]",
+          "name": "[variables('imageNameGen2X64')]",
           "location": "[variables('location')]",
           "dependsOn": [
             "[variables('galleryName')]"
           ],
           "properties": {
-            "architecture": "[parameters('architecture')]",
+            "architecture": "x64",
             "hyperVGeneration": "V2",
             "identifier": {
               "offer": "rhcos-gen2",
@@ -123,7 +120,7 @@
               "name": "[variables('imageRelease')]",
               "location": "[variables('location')]",
               "dependsOn": [
-                "[variables('imageNameGen2')]"
+                "[variables('imageNameGen2X64')]"
               ],
               "properties": {
                 "publishingProfile": {
@@ -139,14 +136,114 @@
                   "osDiskImage": {
                     "source": {
                       "id": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccount'))]",
-                      "uri": "[parameters('vhdBlobURL')]"
+                      "uri": "[parameters('vhdBlobURLX64')]"
                     }
                   }
                 }
               }
             }
           ]
-        }
+        },
+		{
+          "apiVersion": "2021-10-01",
+          "type": "images",
+          "name": "[variables('imageNameArm64')]",
+          "location": "[variables('location')]",
+          "dependsOn": [
+            "[variables('galleryName')]"
+          ],
+          "properties": {
+            "architecture": "Arm64",
+            "hyperVGeneration": "V1",
+            "identifier": {
+              "offer": "rhcos",
+              "publisher": "RedHat",
+              "sku": "basic"
+            },
+            "osState": "Generalized",
+            "osType": "Linux"
+          },
+          "resources": [
+            {
+              "apiVersion": "2021-10-01",
+              "type": "versions",
+              "name": "[variables('imageRelease')]",
+              "location": "[variables('location')]",
+              "dependsOn": [
+                "[variables('imageNameArm64')]"
+              ],
+              "properties": {
+                "publishingProfile": {
+                  "storageAccountType": "Standard_LRS",
+                  "targetRegions": [
+                    {
+                      "name": "[variables('location')]",
+                      "regionalReplicaCount": "1"
+                    }
+                  ]
+                },
+                "storageProfile": {
+                  "osDiskImage": {
+                    "source": {
+                      "id": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccount'))]",
+                      "uri": "[parameters('vhdBlobURLARM64')]"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "apiVersion": "2021-10-01",
+          "type": "images",
+          "name": "[variables('imageNameGen2Arm64')]",
+          "location": "[variables('location')]",
+          "dependsOn": [
+            "[variables('galleryName')]"
+          ],
+          "properties": {
+            "architecture": "Arm64",
+            "hyperVGeneration": "V2",
+            "identifier": {
+              "offer": "rhcos-gen2",
+              "publisher": "RedHat-gen2",
+              "sku": "gen2"
+            },
+            "osState": "Generalized",
+            "osType": "Linux"
+          },
+          "resources": [
+            {
+              "apiVersion": "2021-10-01",
+              "type": "versions",
+              "name": "[variables('imageRelease')]",
+              "location": "[variables('location')]",
+              "dependsOn": [
+                "[variables('imageNameGen2Arm64')]"
+              ],
+              "properties": {
+                "publishingProfile": {
+                  "storageAccountType": "Standard_LRS",
+                  "targetRegions": [
+                    {
+                      "name": "[variables('location')]",
+                      "regionalReplicaCount": "1"
+                    }
+                  ]
+                },
+                "storageProfile": {
+                  "osDiskImage": {
+                    "source": {
+                      "id": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccount'))]",
+                      "uri": "[parameters('vhdBlobURLARM64')]"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
       ]
     }
   ]

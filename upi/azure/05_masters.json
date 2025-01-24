@@ -82,7 +82,7 @@
     "sshKeyPath" : "/home/core/.ssh/authorized_keys",
     "identityName" : "[concat(parameters('baseName'), '-identity')]",
     "galleryName": "[concat('gallery_', replace(parameters('baseName'), '-', '_'))]",
-    "imageName" : "[concat(parameters('baseName'), if(equals(parameters('hyperVGen'), 'V2'), '-gen2', ''))]",
+    "imageName" : "[concat(parameters('baseName'), '-Arm64', if(equals(parameters('hyperVGen'), 'V2'), '-gen2', ''))]",
     "copy" : [
       {
         "name" : "vmNames",
